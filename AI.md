@@ -41,7 +41,8 @@ A Kanban board component that organizes items into movable stacks with drag-and-
     => `to`: Destination stack value 
     => `oldIndex`: Original position index
     => `newIndex`: New position index
-    => `updatedList`: Updated array of items
+    => `updatedList`: Updated array of items for the changed stack (existing behavior)
+    => `updatedFullList`: Flat array of all board items after the move, grouped by stack and ordered within each stack, with patched `stackedBy` / `sortedBy` values when configured
 
 ***Exposed Variables:***
 - `isDragging`: Boolean indicating if an item is currently being dragged

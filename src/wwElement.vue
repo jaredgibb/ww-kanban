@@ -48,34 +48,251 @@ export default {
             value: null,
             items: [],
         });
+        const crossColumnStackCache = new Map();
+
+        function cloneItem(item) {
+            if (typeof structuredClone === "function") {
+                try {
+                    return structuredClone(item);
+                } catch (error) {
+                    // Fall back to recursive cloning for values structuredClone cannot handle.
+                }
+            }
+
+            if (Array.isArray(item)) {
+                return item.map((value) => cloneItem(value));
+            }
+
+            if (item && typeof item === "object") {
+                return Object.keys(item).reduce((result, key) => {
+                    result[key] = cloneItem(item[key]);
+                    return result;
+                }, {});
+            }
+
+            return item;
+        }
+
+        function setByPath(target, path, value) {
+            if (!path || !target || typeof target !== "object") return;
+
+            const segments = String(path).match(/[^.[\]]+/g);
+            if (!segments || !segments.length) return;
+
+            let cursor = target;
+            for (let i = 0; i < segments.length - 1; i++) {
+                const segment = segments[i];
+                const nextSegment = segments[i + 1];
+
+                if (cursor[segment] === null || typeof cursor[segment] !== "object") {
+                    cursor[segment] = /^\d+$/.test(nextSegment) ? [] : {};
+                }
+
+                cursor = cursor[segment];
+            }
+
+            cursor[segments[segments.length - 1]] = value;
+        }
+
+        function isSameItem(firstItem, secondItem) {
+            if (firstItem === secondItem) return true;
+            if (!firstItem || !secondItem) return false;
+
+            if (props.content.itemKey) {
+                const firstKey = wwLib.resolveObjectPropertyPath(firstItem, props.content.itemKey);
+                const secondKey = wwLib.resolveObjectPropertyPath(secondItem, props.content.itemKey);
+
+                if (firstKey !== undefined && secondKey !== undefined) {
+                    return firstKey === secondKey;
+                }
+            }
+
+            return false;
+        }
+
+        function removeMatchingItem(items, itemToRemove) {
+            if (!Array.isArray(items)) return [];
+
+            const index = items.findIndex((item) => isSameItem(item, itemToRemove));
+            if (index === -1) return items.slice();
+
+            return [...items.slice(0, index), ...items.slice(index + 1)];
+        }
+
+        function getStackSnapshotMap() {
+            const stackMap = new Map();
+
+            stackMap.set(null, Array.isArray(uncategorizedStack.items) ? uncategorizedStack.items.slice() : []);
+
+            for (const stack of internalStacks.value || []) {
+                stackMap.set(stack.value, Array.isArray(stack.items) ? stack.items.slice() : []);
+            }
+
+            return stackMap;
+        }
+
+        function isDefinedStackValue(stackValue) {
+            return (internalStacks.value || []).some((stack) => stack.value === stackValue);
+        }
+
+        function getBucketKeyFromStackedValue(stackValue) {
+            return isDefinedStackValue(stackValue) ? stackValue : null;
+        }
+
+        function buildFinalBoardGroups({ stackValue, updatedStackItems, movedItem, fromStackedValue, isCrossColumnAdd }) {
+            const stackMap = getStackSnapshotMap();
+
+            if (Array.isArray(updatedStackItems)) {
+                stackMap.set(stackValue, updatedStackItems.slice());
+            }
+
+            if (isCrossColumnAdd) {
+                const sourceBucketKey = getBucketKeyFromStackedValue(fromStackedValue);
+                const cachedSourceItems = crossColumnStackCache.get(sourceBucketKey);
+
+                if (Array.isArray(cachedSourceItems)) {
+                    stackMap.set(sourceBucketKey, cachedSourceItems.slice());
+                } else if (sourceBucketKey !== stackValue) {
+                    stackMap.set(sourceBucketKey, removeMatchingItem(stackMap.get(sourceBucketKey), movedItem));
+                }
+            }
+
+            return {
+                uncategorizedItems: Array.isArray(stackMap.get(null)) ? stackMap.get(null).slice() : [],
+                stacks: (internalStacks.value || []).map((stack) => ({
+                    value: stack.value,
+                    items: Array.isArray(stackMap.get(stack.value)) ? stackMap.get(stack.value).slice() : [],
+                })),
+            };
+        }
+
+        function buildUpdatedFullList({
+            stacks,
+            uncategorizedItems,
+            movedItem,
+            normalizeMovedIntoUncategorized = false,
+        }) {
+            const updatedFullList = [];
+            const stackedByPath = props.content.stackedBy;
+            const sortedByPath = props.content.sortedBy;
+
+            const pushBucket = (items, { stackValue, isUncategorized }) => {
+                if (!Array.isArray(items)) return;
+
+                items.forEach((item, index) => {
+                    const clonedItem = cloneItem(item);
+
+                    if (stackedByPath) {
+                        if (isUncategorized) {
+                            if (normalizeMovedIntoUncategorized && movedItem && isSameItem(item, movedItem)) {
+                                setByPath(clonedItem, stackedByPath, null);
+                            }
+                        } else {
+                            setByPath(clonedItem, stackedByPath, stackValue);
+                        }
+                    }
+
+                    if (sortedByPath) {
+                        setByPath(clonedItem, sortedByPath, index);
+                    }
+
+                    updatedFullList.push(clonedItem);
+                });
+            };
+
+            if (props.content.uncategorizedStack) {
+                pushBucket(uncategorizedItems, { stackValue: null, isUncategorized: true });
+            }
+
+            for (const stack of stacks || []) {
+                pushBucket(stack.items, { stackValue: stack.value, isUncategorized: false });
+            }
+
+            if (!props.content.uncategorizedStack) {
+                pushBucket(uncategorizedItems, { stackValue: null, isUncategorized: true });
+            }
+
+            return updatedFullList;
+        }
+
+        function emitItemMovedEvent({
+            item,
+            from,
+            to,
+            oldIndex,
+            newIndex,
+            updatedList,
+            fullListContext,
+        }) {
+            emit("trigger-event", {
+                name: "item:moved",
+                event: {
+                    item,
+                    from,
+                    to,
+                    oldIndex,
+                    newIndex,
+                    updatedList,
+                    updatedFullList: buildUpdatedFullList(fullListContext),
+                },
+            });
+        }
 
         provide("customHandler", (change, { stack: stackValue, updatedStackItems }) => {
+            if (change.removed) {
+                crossColumnStackCache.set(stackValue, Array.isArray(updatedStackItems) ? updatedStackItems.slice() : []);
+            }
+
             if (change.moved) {
-                emit("trigger-event", {
-                    name: "item:moved",
-                    event: {
-                        item: change.moved.element,
-                        from: stackValue,
-                        to: stackValue,
-                        oldIndex: change.moved.oldIndex,
-                        newIndex: change.moved.newIndex,
-                        updatedList: updatedStackItems,
+                const fullListContext = buildFinalBoardGroups({
+                    stackValue,
+                    updatedStackItems,
+                    movedItem: change.moved.element,
+                    fromStackedValue: stackValue,
+                    isCrossColumnAdd: false,
+                });
+
+                emitItemMovedEvent({
+                    item: change.moved.element,
+                    from: stackValue,
+                    to: stackValue,
+                    oldIndex: change.moved.oldIndex,
+                    newIndex: change.moved.newIndex,
+                    updatedList: updatedStackItems,
+                    fullListContext: {
+                        ...fullListContext,
+                        movedItem: change.moved.element,
+                        normalizeMovedIntoUncategorized: false,
                     },
                 });
+                crossColumnStackCache.clear();
+                return;
             }
 
             if (change.added) {
-                emit("trigger-event", {
-                    name: "item:moved",
-                    event: {
-                        item: change.added.element,
-                        from: wwLib.resolveObjectPropertyPath(change.added.element, props.content.stackedBy),
-                        to: stackValue,
-                        oldIndex: null,
-                        newIndex: change.added.newIndex,
-                        updatedList: updatedStackItems,
+                const from = wwLib.resolveObjectPropertyPath(change.added.element, props.content.stackedBy);
+                const fullListContext = buildFinalBoardGroups({
+                    stackValue,
+                    updatedStackItems,
+                    movedItem: change.added.element,
+                    fromStackedValue: from,
+                    isCrossColumnAdd: true,
+                });
+
+                emitItemMovedEvent({
+                    item: change.added.element,
+                    from,
+                    to: stackValue,
+                    oldIndex: null,
+                    newIndex: change.added.newIndex,
+                    updatedList: updatedStackItems,
+                    fullListContext: {
+                        ...fullListContext,
+                        movedItem: change.added.element,
+                        normalizeMovedIntoUncategorized: stackValue === null,
                     },
                 });
+                crossColumnStackCache.clear();
             }
         });
 
@@ -230,6 +447,7 @@ export default {
                 oldIndex: 0,
                 newIndex: 1,
                 updatedList: this.items,
+                updatedFullList: this.items,
             };
         },
         /* wwEditor:end */

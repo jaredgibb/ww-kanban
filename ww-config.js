@@ -47,6 +47,7 @@ export default {
                 oldIndex: 0,
                 newIndex: 1,
                 updatedList: [],
+                updatedFullList: [],
             },
             getTestEvent: "getTestEvent",
             default: true,
