@@ -134,6 +134,19 @@ export default {
             return [...items.slice(0, index), ...items.slice(index + 1)];
         }
 
+        function removeAllMatchingItems(items, itemToRemove) {
+            if (!Array.isArray(items)) return [];
+            return items.filter((item) => !isSameItem(item, itemToRemove));
+        }
+
+        function insertItemAtIndex(items, itemToInsert, index) {
+            const list = Array.isArray(items) ? items.slice() : [];
+            const normalizedIndex = Number.isInteger(index) ? Math.max(0, Math.min(index, list.length)) : list.length;
+
+            list.splice(normalizedIndex, 0, itemToInsert);
+            return list;
+        }
+
         function getStackSnapshotMap() {
             const stackMap = new Map();
 
@@ -171,12 +184,9 @@ export default {
             fromStackedValue,
             sourceBucketKey: explicitSourceBucketKey,
             isCrossColumnAdd,
+            newIndex,
         }) {
             const stackMap = getStackSnapshotMap();
-
-            if (Array.isArray(updatedStackItems)) {
-                stackMap.set(stackValue, updatedStackItems.slice());
-            }
 
             if (isCrossColumnAdd) {
                 const sourceBucketKey =
@@ -186,10 +196,16 @@ export default {
                 const cachedSourceItems = crossColumnStackCache.get(sourceBucketKey);
 
                 if (sourceBucketKey !== stackValue && Array.isArray(cachedSourceItems)) {
-                    stackMap.set(sourceBucketKey, removeMatchingItem(cachedSourceItems, movedItem));
+                    stackMap.set(sourceBucketKey, removeAllMatchingItems(cachedSourceItems, movedItem));
                 } else if (sourceBucketKey !== stackValue) {
-                    stackMap.set(sourceBucketKey, removeMatchingItem(stackMap.get(sourceBucketKey), movedItem));
+                    stackMap.set(sourceBucketKey, removeAllMatchingItems(stackMap.get(sourceBucketKey), movedItem));
                 }
+
+                const destinationItems = removeAllMatchingItems(stackMap.get(stackValue), movedItem);
+                stackMap.set(stackValue, insertItemAtIndex(destinationItems, movedItem, newIndex));
+            } else {
+                const reorderedItems = removeAllMatchingItems(stackMap.get(stackValue), movedItem);
+                stackMap.set(stackValue, insertItemAtIndex(reorderedItems, movedItem, newIndex));
             }
 
             return {
@@ -294,6 +310,7 @@ export default {
                     movedItem: change.moved.element,
                     fromStackedValue: stackValue,
                     isCrossColumnAdd: false,
+                    newIndex: change.moved.newIndex,
                 });
 
                 emitItemMovedEvent({
@@ -333,6 +350,7 @@ export default {
                     fromStackedValue: from,
                     sourceBucketKey,
                     isCrossColumnAdd: true,
+                    newIndex: change.added.newIndex,
                 });
 
                 emitItemMovedEvent({
