@@ -116,6 +116,11 @@ export default {
                 }
             }
 
+            // Pragmatic fallback: many datasets have a stable `id` even if itemKey is not configured.
+            if (firstItem.id !== undefined && secondItem.id !== undefined) {
+                return firstItem.id === secondItem.id;
+            }
+
             return false;
         }
 
