@@ -49,6 +49,7 @@ export default {
             items: [],
         });
         const crossColumnStackCache = new Map();
+        const crossColumnRemovedMetaCache = new Map();
 
         function cloneItem(item) {
             if (typeof structuredClone === "function") {
@@ -165,7 +166,7 @@ export default {
                 const cachedSourceItems = crossColumnStackCache.get(sourceBucketKey);
 
                 if (Array.isArray(cachedSourceItems)) {
-                    stackMap.set(sourceBucketKey, cachedSourceItems.slice());
+                    stackMap.set(sourceBucketKey, removeMatchingItem(cachedSourceItems, movedItem));
                 } else if (sourceBucketKey !== stackValue) {
                     stackMap.set(sourceBucketKey, removeMatchingItem(stackMap.get(sourceBucketKey), movedItem));
                 }
@@ -252,9 +253,18 @@ export default {
             });
         }
 
+        function clearCrossColumnCaches() {
+            crossColumnStackCache.clear();
+            crossColumnRemovedMetaCache.clear();
+        }
+
         provide("customHandler", (change, { stack: stackValue, updatedStackItems }) => {
             if (change.removed) {
                 crossColumnStackCache.set(stackValue, Array.isArray(updatedStackItems) ? updatedStackItems.slice() : []);
+                crossColumnRemovedMetaCache.set(stackValue, {
+                    item: change.removed.element,
+                    oldIndex: change.removed.oldIndex,
+                });
             }
 
             if (change.moved) {
@@ -279,12 +289,18 @@ export default {
                         normalizeMovedIntoUncategorized: false,
                     },
                 });
-                crossColumnStackCache.clear();
+                clearCrossColumnCaches();
                 return;
             }
 
             if (change.added) {
                 const from = wwLib.resolveObjectPropertyPath(change.added.element, props.content.stackedBy);
+                const sourceBucketKey = getBucketKeyFromStackedValue(from);
+                const removedMeta = crossColumnRemovedMetaCache.get(sourceBucketKey);
+                const crossColumnOldIndex =
+                    removedMeta && isSameItem(removedMeta.item, change.added.element)
+                        ? removedMeta.oldIndex
+                        : change.added.oldIndex ?? null;
                 const fullListContext = buildFinalBoardGroups({
                     stackValue,
                     updatedStackItems,
@@ -297,7 +313,7 @@ export default {
                     item: change.added.element,
                     from,
                     to: stackValue,
-                    oldIndex: null,
+                    oldIndex: crossColumnOldIndex,
                     newIndex: change.added.newIndex,
                     updatedList: updatedStackItems,
                     fullListContext: {
@@ -306,7 +322,7 @@ export default {
                         normalizeMovedIntoUncategorized: stackValue === null,
                     },
                 });
-                crossColumnStackCache.clear();
+                clearCrossColumnCaches();
             }
         });
 
