@@ -154,7 +154,24 @@ export default {
             return isDefinedStackValue(stackValue) ? stackValue : null;
         }
 
-        function buildFinalBoardGroups({ stackValue, updatedStackItems, movedItem, fromStackedValue, isCrossColumnAdd }) {
+        function findRemovedMetaForItem(movedItem) {
+            for (const [stackValue, meta] of crossColumnRemovedMetaCache.entries()) {
+                if (meta && isSameItem(meta.item, movedItem)) {
+                    return { stackValue, ...meta };
+                }
+            }
+
+            return null;
+        }
+
+        function buildFinalBoardGroups({
+            stackValue,
+            updatedStackItems,
+            movedItem,
+            fromStackedValue,
+            sourceBucketKey: explicitSourceBucketKey,
+            isCrossColumnAdd,
+        }) {
             const stackMap = getStackSnapshotMap();
 
             if (Array.isArray(updatedStackItems)) {
@@ -162,10 +179,13 @@ export default {
             }
 
             if (isCrossColumnAdd) {
-                const sourceBucketKey = getBucketKeyFromStackedValue(fromStackedValue);
+                const sourceBucketKey =
+                    explicitSourceBucketKey !== undefined
+                        ? explicitSourceBucketKey
+                        : getBucketKeyFromStackedValue(fromStackedValue);
                 const cachedSourceItems = crossColumnStackCache.get(sourceBucketKey);
 
-                if (Array.isArray(cachedSourceItems)) {
+                if (sourceBucketKey !== stackValue && Array.isArray(cachedSourceItems)) {
                     stackMap.set(sourceBucketKey, removeMatchingItem(cachedSourceItems, movedItem));
                 } else if (sourceBucketKey !== stackValue) {
                     stackMap.set(sourceBucketKey, removeMatchingItem(stackMap.get(sourceBucketKey), movedItem));
@@ -294,9 +314,14 @@ export default {
             }
 
             if (change.added) {
-                const from = wwLib.resolveObjectPropertyPath(change.added.element, props.content.stackedBy);
-                const sourceBucketKey = getBucketKeyFromStackedValue(from);
-                const removedMeta = crossColumnRemovedMetaCache.get(sourceBucketKey);
+                const fromFromItem = wwLib.resolveObjectPropertyPath(change.added.element, props.content.stackedBy);
+                const removedMetaMatch = findRemovedMetaForItem(change.added.element);
+                const sourceBucketKey =
+                    removedMetaMatch?.stackValue !== undefined
+                        ? removedMetaMatch.stackValue
+                        : getBucketKeyFromStackedValue(fromFromItem);
+                const from = removedMetaMatch ? removedMetaMatch.stackValue : fromFromItem;
+                const removedMeta = removedMetaMatch || crossColumnRemovedMetaCache.get(sourceBucketKey);
                 const crossColumnOldIndex =
                     removedMeta && isSameItem(removedMeta.item, change.added.element)
                         ? removedMeta.oldIndex
@@ -306,6 +331,7 @@ export default {
                     updatedStackItems,
                     movedItem: change.added.element,
                     fromStackedValue: from,
+                    sourceBucketKey,
                     isCrossColumnAdd: true,
                 });
 
