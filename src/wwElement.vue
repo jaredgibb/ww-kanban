@@ -76,7 +76,16 @@ export default {
         function setByPath(target, path, value) {
             if (!path || !target || typeof target !== "object") return;
 
-            const segments = String(path).match(/[^.[\]]+/g);
+            const segments = String(path)
+                .match(/[^.[\]]+/g)
+                ?.map((segment) => {
+                    const trimmed = segment.trim();
+                    const isQuoted =
+                        (trimmed.startsWith("'") && trimmed.endsWith("'")) ||
+                        (trimmed.startsWith('"') && trimmed.endsWith('"'));
+
+                    return isQuoted ? trimmed.slice(1, -1) : trimmed;
+                });
             if (!segments || !segments.length) return;
 
             let cursor = target;
